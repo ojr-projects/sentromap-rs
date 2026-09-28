@@ -158,6 +158,25 @@ pub fn windows(seq: &[u8]) -> impl Iterator<Item = (usize, u64)> + '_ {
     })
 }
 
+/// Every valid window with both orientations, rolled incrementally:
+/// `(offset of first base, forward k-mer, reverse complement)`.
+pub fn windows_both(seq: &[u8]) -> impl Iterator<Item = (usize, u64, u64)> + '_ {
+    let mut fwd = 0u64;
+    let mut rc = 0u64;
+    let mut valid = 0u32;
+    seq.iter().enumerate().filter_map(move |(i, &c)| {
+        let code = BASE_CODE[c as usize];
+        if code == INVALID {
+            valid = 0;
+            return None;
+        }
+        fwd = ((fwd << 2) | code as u64) & KMER_MASK;
+        rc = (rc >> 2) | (((3 - code) as u64) << (2 * (K - 1)));
+        valid += 1;
+        if valid >= K { Some((i + 1 - K as usize, fwd, rc)) } else { None }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +225,17 @@ mod tests {
         assert_eq!(w.len(), 3);
         assert_eq!(w[0].0, 0);
         assert_eq!(to_string(w[0].1), "ACGTACGTACGTACGTACGTACGTACGTACG");
+    }
+
+    #[test]
+    fn windows_both_rolls_revcomp() {
+        let seq = b"ACGGTTACGATTTAGGCATGCANNNACGTGGGGTACCATGGACTTTAGCAGCATCAGACTTAGAC";
+        let a: Vec<_> = windows(seq).collect();
+        let b: Vec<_> = windows_both(seq).collect();
+        assert_eq!(a.len(), b.len());
+        for ((i, f), (j, f2, r)) in a.into_iter().zip(b) {
+            assert_eq!((i, f), (j, f2));
+            assert_eq!(r, revcomp(f));
+        }
     }
 }

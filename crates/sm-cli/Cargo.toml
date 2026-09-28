@@ -1,0 +1,21 @@
+[package]
+name = "sm-cli"
+description = "The sentromap command-line tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sentromap"
+path = "src/main.rs"
+
+[dependencies]
+sm-core.workspace = true
+sm-index = { path = "../sm-index" }
+sm-search = { path = "../sm-search" }
+anyhow.workspace = true
+clap.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

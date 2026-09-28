@@ -1,0 +1,16 @@
+[package]
+name = "sm-search"
+description = "Search engines (full scan, pigeonhole walk), cost model and strand reconciliation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+sm-index = { path = "../sm-index" }
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+anyhow.workspace = true
