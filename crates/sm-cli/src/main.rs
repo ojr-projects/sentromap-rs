@@ -6,6 +6,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sm_core::kmer::{self, K};
 use sm_index::{BuildOptions, Index};
+use sm_search::{CostModel, Engine};
+
+mod bench;
 
 #[derive(Parser)]
 #[command(name = "sentromap", version, about = "Genome-wide Hamming-neighbourhood search for 31-mers")]
@@ -34,6 +37,9 @@ enum Cmd {
         /// Display name of the genome.
         #[arg(long, default_value = "")]
         name: String,
+        /// Skip copy B (full-scan-only index, about half the size).
+        #[arg(long)]
+        no_copy_b: bool,
         /// Spot-check this many random windows after building.
         #[arg(long, default_value_t = 10_000)]
         spot_checks: usize,
@@ -49,6 +55,14 @@ enum Cmd {
         /// Output: summary, variants (one row per variant) or sites (one row per site).
         #[arg(long, default_value = "summary")]
         output: String,
+        /// Engine: auto (cost model), scan or pigeonhole.
+        #[arg(long, default_value = "auto")]
+        engine: String,
+    },
+    /// Benchmarks.
+    Bench {
+        #[command(subcommand)]
+        what: BenchCmd,
     },
     /// Validate an index: structure, checksums, and (with --fasta) spot checks.
     Verify {
@@ -60,6 +74,19 @@ enum Cmd {
     },
     /// Print an index's manifest.
     Info { index: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum BenchCmd {
+    /// Compare the engines over n for unique, top-repeat and random queries (checks agreement).
+    Search {
+        index: PathBuf,
+        #[arg(long, default_value_t = 15)]
+        max_n: u32,
+        /// Queries per class.
+        #[arg(long, default_value_t = 5)]
+        queries: usize,
+    },
 }
 
 fn peak_rss_mb() -> Option<f64> {
@@ -91,8 +118,8 @@ fn main() -> Result<()> {
         rayon::ThreadPoolBuilder::new().num_threads(t).build_global()?;
     }
     match cli.cmd {
-        Cmd::Build { fasta, out, prefix_len, tmp_dir, name, spot_checks } => {
-            let opts = BuildOptions { prefix_len, tmp_dir, name, ..Default::default() };
+        Cmd::Build { fasta, out, prefix_len, tmp_dir, name, no_copy_b, spot_checks } => {
+            let opts = BuildOptions { prefix_len, tmp_dir, name, copy_b: !no_copy_b, ..Default::default() };
             let m = sm_index::build(&fasta, &out, &opts)?;
             let idx = Index::open(&out)?;
             let t = Instant::now();
@@ -114,18 +141,33 @@ fn main() -> Result<()> {
                 peak_rss_mb().unwrap_or(0.0)
             );
         }
-        Cmd::Search { index, query, n, output } => {
+        Cmd::Search { index, query, n, output, engine } => {
             let idx = Index::open(&index)?;
             let q = parse_query(&idx, &query)?;
+            let force = match engine.as_str() {
+                "auto" => None,
+                "scan" => Some(Engine::Scan),
+                "pigeonhole" => Some(Engine::Pigeonhole),
+                e => bail!("unknown engine {e:?}"),
+            };
+            if force == Some(Engine::Pigeonhole) && idx.b.is_none() {
+                bail!("this index has no copy B; rebuild without --no-copy-b");
+            }
             let t = Instant::now();
-            let v = sm_search::scan(&idx, q, n);
+            let (v, plan) = sm_search::search(&idx, q, n, &CostModel::default(), force);
             let secs = t.elapsed().as_secs_f64();
             let mut out = BufWriter::new(std::io::stdout().lock());
             match output.as_str() {
                 "summary" => {
                     let sites = v.site_count(&idx);
                     writeln!(out, "query\t{}", kmer::to_string(q))?;
-                    writeln!(out, "variants\t{}\nsites\t{sites}\nsearch_ms\t{:.2}", v.len(), secs * 1e3)?;
+                    writeln!(
+                        out,
+                        "variants\t{}\nsites\t{sites}\nengine\t{:?}\nsearch_ms\t{:.2}",
+                        v.len(),
+                        plan.engine,
+                        secs * 1e3
+                    )?;
                     let hist = v.histogram();
                     let mut cum_v = 0;
                     let mut cum_s = 0u64;
@@ -183,6 +225,10 @@ fn main() -> Result<()> {
                 eprintln!("{n} spot checks passed");
             }
             eprintln!("ok");
+        }
+        Cmd::Bench { what: BenchCmd::Search { index, max_n, queries } } => {
+            let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
+            bench::search_bench(&idx, max_n, queries, &mut std::io::stdout().lock())?;
         }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;

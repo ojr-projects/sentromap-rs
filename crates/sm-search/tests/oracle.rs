@@ -43,10 +43,18 @@ fn check_engine(opts: BuildOptions, seeds: std::ops::RangeInclusive<u64>) {
         let (_dir, g, sources, idx) = build_synth(&spec, &opts);
         let mut rng = Rng::new(seed * 7919);
         for q in queries(&g, &sources, &mut rng) {
-            for n in [0, 1, 2, 3, 4, 6] {
-                let got = sm_search::scan(&idx, q, n).sites(&idx);
+            for n in [0, 1, 2, 3, 4, 5, 6, 9] {
                 let want = oracle::search_genome(&g, q, n);
-                assert_eq!(got, want, "seed {seed} query {} n {n}", kmer::to_string(q));
+                let mut scan = sm_search::scan(&idx, q, n);
+                assert_eq!(scan.sites(&idx), want, "scan: seed {seed} query {} n {n}", kmer::to_string(q));
+                if idx.b.is_some() {
+                    let mut ph = sm_search::pigeonhole(&idx, q, n);
+                    assert_eq!(ph.sites(&idx), want, "pigeonhole: seed {seed} query {} n {n}", kmer::to_string(q));
+                    // Exactly once: identical variant rows, no duplicates.
+                    scan.sort_by_leaf();
+                    ph.sort_by_leaf();
+                    assert_eq!(ph, scan, "pigeonhole variants differ from scan");
+                }
             }
         }
     }
@@ -60,6 +68,11 @@ fn scan_matches_oracle() {
 #[test]
 fn scan_matches_oracle_many_partitions() {
     check_engine(BuildOptions { partition_bits: Some(8), prefix_len: Some(9), ..Default::default() }, 5..=6);
+}
+
+#[test]
+fn scan_only_index() {
+    check_engine(BuildOptions { copy_b: false, ..Default::default() }, 7..=7);
 }
 
 #[test]

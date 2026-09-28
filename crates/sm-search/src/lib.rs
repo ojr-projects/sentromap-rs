@@ -1,8 +1,12 @@
-//! Search engines over an index: full scan (§7.3), with more to come (pigeonhole walk §7.4,
-//! cost-model selection §7.5).
+//! Search engines over an index (design §7): full scan, the pigeonhole two-copy walk, and
+//! cost-model engine selection.
 
+pub mod engine;
+pub mod pigeonhole;
 pub mod scan;
 pub mod variants;
 
+pub use engine::{CostModel, Engine, Plan, search};
+pub use pigeonhole::pigeonhole;
 pub use scan::scan;
 pub use variants::Variants;

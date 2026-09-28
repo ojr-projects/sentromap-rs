@@ -9,6 +9,7 @@ license.workspace = true
 sm-core.workspace = true
 sm-index = { path = "../sm-index" }
 rayon.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

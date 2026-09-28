@@ -650,6 +650,7 @@ dependencies = [
  "anyhow",
  "proptest",
  "rayon",
+ "serde",
  "sm-core",
  "sm-index",
  "tempfile",

@@ -24,12 +24,20 @@ fn check_sorted<W: Word>(c: &SortedKmers<W>) -> Result<()> {
     if let Some(b) = bad {
         bail!("bucket {b} unsorted or holds a foreign k-mer");
     }
-    let canon_bad = (0..c.len()).into_par_iter().find_any(|&i| {
-        let k = c.kmer_at(i);
-        sm_core::canonical(k) != k
+    Ok(())
+}
+
+fn check_canonical<W: Word>(c: &SortedKmers<W>, rotated: bool) -> Result<()> {
+    let bad = (0..c.buckets()).into_par_iter().find_any(|&b| {
+        let prefix = (b as u64) << c.shift();
+        c.words()[c.bucket_range(b)].iter().any(|w| {
+            let k = w.to_kmer(prefix);
+            let k = if rotated { sm_core::unrotate(k) } else { k };
+            sm_core::canonical(k) != k
+        })
     });
-    if let Some(i) = canon_bad.filter(|_| c.len() < 50_000_000) {
-        bail!("k-mer {i} is not canonical");
+    if let Some(b) = bad {
+        bail!("bucket {b} holds a non-canonical k-mer");
     }
     Ok(())
 }
@@ -37,6 +45,11 @@ fn check_sorted<W: Word>(c: &SortedKmers<W>) -> Result<()> {
 /// Structural checks: sortedness, canonical form, rows ascending and non-empty.
 pub fn verify_structure(idx: &Index) -> Result<()> {
     with_kmers!(&idx.a, c => check_sorted(c))?;
+    with_kmers!(&idx.a, c => check_canonical(c, false))?;
+    if let Some(b) = &idx.b {
+        with_kmers!(b, c => check_sorted(c))?;
+        with_kmers!(b, c => check_canonical(c, true))?;
+    }
     let pos = &idx.positions;
     let n = idx.manifest.distinct_kmers;
     let bad = (0..n as u32).into_par_iter().find_any(|&l| {

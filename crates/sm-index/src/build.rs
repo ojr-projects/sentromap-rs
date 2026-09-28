@@ -36,6 +36,8 @@ pub struct BuildOptions {
     pub partition_bits: Option<u32>,
     /// Display name of the genome.
     pub name: String,
+    /// Build copy B (the rotated copy for pigeonhole search). Without it only the full scan runs.
+    pub copy_b: bool,
 }
 
 impl Default for BuildOptions {
@@ -46,6 +48,7 @@ impl Default for BuildOptions {
             partition_records: 2_000_000,
             partition_bits: None,
             name: String::new(),
+            copy_b: true,
         }
     }
 }
@@ -256,9 +259,17 @@ pub fn build(fasta: &Path, out: &Path, opts: &BuildOptions) -> Result<Manifest> 
     row_w.finish()?;
     write_array(&out.join("pos.select"), "select", &select.samples, select.ones())?;
     ensure!(select.ones() == distinct + 1, "row count mismatch");
-    drop(tmp);
     stages.insert("pass2_sort".into(), t.elapsed().as_secs_f64());
     info!(distinct, sites, secs = t.elapsed().as_secs_f64(), "pass 2 done");
+
+    // Pass 3: copy B from the distinct k-mers, re-partitioned by their rotated top bits.
+    if opts.copy_b {
+        let t = Instant::now();
+        build_rotated(out, tmp.path(), bits)?;
+        stages.insert("pass3_copy_b".into(), t.elapsed().as_secs_f64());
+        info!(secs = t.elapsed().as_secs_f64(), "pass 3 (copy B) done");
+    }
+    drop(tmp);
 
     // Finalise copy A: prefix table and word width from the exact N.
     let t = Instant::now();
@@ -266,12 +277,15 @@ pub fn build(fasta: &Path, out: &Path, opts: &BuildOptions) -> Result<Manifest> 
     ensure!((1..=15).contains(&p), "prefix length must be 1..=15");
     let word_bits = if p == 15 { 32 } else { 64 };
     finalise_sorted(out, "a", p, word_bits)?;
-    stages.insert("finalise_a".into(), t.elapsed().as_secs_f64());
+    if opts.copy_b {
+        finalise_sorted(out, "b", p, word_bits)?;
+    }
+    stages.insert("finalise".into(), t.elapsed().as_secs_f64());
 
     manifest::write_contigs(&out.join(manifest::CONTIGS), &contigs)?;
 
     let t = Instant::now();
-    let names = [
+    let mut names = vec![
         "a.prefix",
         "a.words",
         "pos.sites",
@@ -283,6 +297,9 @@ pub fn build(fasta: &Path, out: &Path, opts: &BuildOptions) -> Result<Manifest> 
         "seq.soft",
         manifest::CONTIGS,
     ];
+    if opts.copy_b {
+        names.extend(["b.prefix", "b.words"]);
+    }
     let files: BTreeMap<String, FileInfo> =
         names.par_iter().map(|n| Ok((n.to_string(), crc32_file(&out.join(n))?))).collect::<Result<_>>()?;
     stages.insert("checksums".into(), t.elapsed().as_secs_f64());
@@ -296,7 +313,7 @@ pub fn build(fasta: &Path, out: &Path, opts: &BuildOptions) -> Result<Manifest> 
         sites,
         genome_len: contigs.total_len(),
         contigs: contigs.len(),
-        has_copy_b: false,
+        has_copy_b: opts.copy_b,
         source: Source {
             fasta: fasta.canonicalize().unwrap_or(fasta.to_path_buf()).display().to_string(),
             fasta_bytes,
@@ -315,6 +332,70 @@ pub fn build(fasta: &Path, out: &Path, opts: &BuildOptions) -> Result<Manifest> 
     manifest::write_json(&out.join(manifest::MANIFEST), &m)?;
     info!(secs = m.build.seconds, p, distinct, sites, "build done");
     Ok(m)
+}
+
+/// Write `b.words.tmp`: every distinct k-mer rotated (design §6.3), sorted.
+fn build_rotated(out: &Path, tmp: &Path, bits: u32) -> Result<()> {
+    let kmers: Array<u64> = Array::open(&out.join("a.words.tmp"), "words", MapOptions::default())?;
+    kmers.advise(memmap2::Advice::Sequential);
+    let n = 1usize << bits;
+    let shift = 2 * K - bits;
+    let path = |pid: usize| tmp.join(format!("rot{pid:05}"));
+    let mut sizes = vec![0u64; n];
+    // Scatter in large chunks: rotate in parallel, counting-sort by partition, then append
+    // each partition's run with one write.
+    let mut scattered = Vec::new();
+    for chunk in kmers.chunks(1 << 22) {
+        let rot: Vec<u64> = chunk.par_iter().map(|&k| sm_core::rotate(k)).collect();
+        let mut starts = vec![0usize; n + 1];
+        for &r in &rot {
+            starts[(r >> shift) as usize + 1] += 1;
+        }
+        for i in 0..n {
+            starts[i + 1] += starts[i];
+        }
+        scattered.clear();
+        scattered.resize(rot.len(), 0u64);
+        let mut fill = starts.clone();
+        for &r in &rot {
+            let pid = (r >> shift) as usize;
+            scattered[fill[pid]] = r;
+            fill[pid] += 1;
+        }
+        for pid in 0..n {
+            let run = &scattered[starts[pid]..starts[pid + 1]];
+            if !run.is_empty() {
+                let mut f = OpenOptions::new().create(true).append(true).open(path(pid))?;
+                f.write_all(bytemuck::cast_slice(run))?;
+                sizes[pid] += run.len() as u64;
+            }
+        }
+    }
+    let total = kmers.len() as u64;
+    drop(kmers);
+    ensure!(sizes.iter().sum::<u64>() == total, "rotated partitions do not add up");
+
+    let mut w: ArrayWriter<u64> = ArrayWriter::create(&out.join("b.words.tmp"), "words")?;
+    let pids: Vec<usize> = (0..n).collect();
+    for chunk in pids.chunks(rayon::current_num_threads().max(1)) {
+        let outs: Vec<Vec<u64>> = chunk
+            .par_iter()
+            .map(|&pid| -> Result<Vec<u64>> {
+                if sizes[pid] == 0 {
+                    return Ok(Vec::new());
+                }
+                let bytes = fs::read(path(pid))?;
+                fs::remove_file(path(pid)).ok();
+                let mut v: Vec<u64> = bytes.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect();
+                v.sort_unstable();
+                Ok(v)
+            })
+            .collect::<Result<_>>()?;
+        for v in outs {
+            w.extend(&v)?;
+        }
+    }
+    w.finish()
 }
 
 fn parts_path(dir: &Path, pid: usize) -> PathBuf {

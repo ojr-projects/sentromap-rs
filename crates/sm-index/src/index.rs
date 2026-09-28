@@ -17,6 +17,8 @@ pub struct Index {
     pub contigs: Contigs,
     /// Copy A: all distinct canonical k-mers, sorted; a k-mer's index is its leaf id.
     pub a: AnyKmers,
+    /// Copy B: the same k-mers rotated so the back 16 bases lead (pigeonhole search).
+    pub b: Option<AnyKmers>,
     pub positions: Positions,
     pub seq: Sequence,
 }
@@ -31,13 +33,20 @@ impl Index {
         ensure!(manifest.k == sm_core::K, "index built for k = {}", manifest.k);
         let contigs = manifest::read_contigs(&dir.join(manifest::CONTIGS))?;
         let a = AnyKmers::open(dir, "a", manifest.prefix_len, manifest.word_bits, opts)?;
+        let b = if manifest.has_copy_b {
+            let b = AnyKmers::open(dir, "b", manifest.prefix_len, manifest.word_bits, opts)?;
+            ensure!(b.len() == a.len(), "copy B size does not match copy A");
+            Some(b)
+        } else {
+            None
+        };
         let positions = Positions::open(dir, opts)?;
         let seq = Sequence::open(dir, opts)?;
         ensure!(seq.len() == manifest.genome_len, "sequence length does not match the manifest");
         ensure!(a.len() as u64 == manifest.distinct_kmers, "copy A size does not match the manifest");
         ensure!(positions.rows() == manifest.distinct_kmers, "positions rows do not match copy A");
         ensure!(positions.site_count() == manifest.sites, "site count does not match the manifest");
-        Ok(Self { dir: dir.to_path_buf(), manifest, contigs, a, positions, seq })
+        Ok(Self { dir: dir.to_path_buf(), manifest, contigs, a, b, positions, seq })
     }
 
     /// Sites of a variant from leaf `leaf`, `flipped` if it came from the reverse-complement
