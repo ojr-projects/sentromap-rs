@@ -99,3 +99,54 @@ pub fn search_bench(idx: &Index, max_n: u32, per_class: usize, out: &mut impl Wr
     }
     Ok(())
 }
+
+/// `sentromap bench order`: ordering cost and quality over real result sets (port of the
+/// prototype's orderprof, design §9.4–9.5, §16.2).
+pub fn order_bench(idx: &Index, queries: &[(String, u64)], ns: &[u32], out: &mut impl Write) -> Result<()> {
+    let one = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    let max_n = *ns.iter().max().unwrap() as u8;
+    writeln!(
+        out,
+        "query\tn\tvariants\tchartree_ms\tchartree_1t_ms\tplain_sort_ms\tmst_ms\tstar\tchartree\tfrozen\tmst"
+    )?;
+    for (label, q) in queries {
+        let (v, _) = sm_search::search(idx, *q, max_n as u32, &CostModel::default(), None);
+        let (full, _) = {
+            let (r, o) = sm_order::order_per_n(*q, &v.kmer, &v.mismatches, max_n);
+            (o, r)
+        };
+        for &n in ns {
+            let n = n as u8;
+            let count = v.mismatches.iter().filter(|&&m| m <= n).count();
+            if count == 0 {
+                continue;
+            }
+            let ((_, ct), t_ct) = time_ms(|| sm_order::order_per_n(*q, &v.kmer, &v.mismatches, n));
+            let (_, t_ct1) = time_ms(|| one.install(|| sm_order::order_per_n(*q, &v.kmer, &v.mismatches, n)));
+            let (_, t_sort) = time_ms(|| {
+                let mut ks: Vec<u64> =
+                    v.kmer.iter().zip(&v.mismatches).filter(|(_, m)| **m <= n).map(|(k, _)| *k).collect();
+                ks.sort_unstable();
+                ks
+            });
+            let frozen = sm_order::filter_frozen(&full, &v.mismatches, n);
+            let (mst, t_mst) = if count <= sm_order::MST_LIMIT {
+                let (t, ms) = time_ms(|| sm_order::mst(*q, &v.kmer, &v.mismatches, n));
+                (Some(t.tree_length as f64 / count as f64), ms)
+            } else {
+                (None, f64::NAN)
+            };
+            let per = |x: u64| x as f64 / count as f64;
+            writeln!(
+                out,
+                "{label}\t{n}\t{count}\t{t_ct:.2}\t{t_ct1:.2}\t{t_sort:.2}\t{t_mst:.1}\t{:.2}\t{:.2}\t{:.2}\t{}",
+                per(sm_order::star_length(&v.mismatches, n)),
+                per(ct.tree_length),
+                per(frozen.tree_length),
+                mst.map_or("-".to_string(), |x| format!("{x:.2}")),
+            )?;
+            out.flush()?;
+        }
+    }
+    Ok(())
+}

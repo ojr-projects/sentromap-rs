@@ -87,6 +87,15 @@ enum BenchCmd {
         #[arg(long, default_value_t = 5)]
         queries: usize,
     },
+    /// Ordering cost and quality (character tree per-n and frozen, plain sort, exact MST).
+    Order {
+        index: PathBuf,
+        /// Queries: 31 bases or CONTIG:POS. Default: the top repeat and a unique k-mer.
+        #[arg(long)]
+        query: Vec<String>,
+        #[arg(long, value_delimiter = ',', default_value = "4,6,8,10,12,15")]
+        n: Vec<u32>,
+    },
 }
 
 fn peak_rss_mb() -> Option<f64> {
@@ -229,6 +238,19 @@ fn main() -> Result<()> {
         Cmd::Bench { what: BenchCmd::Search { index, max_n, queries } } => {
             let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
             bench::search_bench(&idx, max_n, queries, &mut std::io::stdout().lock())?;
+        }
+        Cmd::Bench { what: BenchCmd::Order { index, query, n } } => {
+            let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
+            let queries: Vec<(String, u64)> = if query.is_empty() {
+                let sets = bench::query_sets(&idx, 1, 7);
+                sets.iter().filter(|s| s.class != "random").map(|s| (s.class.to_string(), s.queries[0])).collect()
+            } else {
+                query.iter().map(|q| Ok((q.clone(), parse_query(&idx, q)?))).collect::<Result<_>>()?
+            };
+            for (label, q) in &queries {
+                eprintln!("{label}: {}", kmer::to_string(*q));
+            }
+            bench::order_bench(&idx, &queries, &n, &mut std::io::stdout().lock())?;
         }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;

@@ -612,6 +612,7 @@ dependencies = [
  "serde_json",
  "sm-core",
  "sm-index",
+ "sm-order",
  "sm-search",
  "tracing",
  "tracing-subscriber",
@@ -641,6 +642,15 @@ dependencies = [
  "sm-core",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "sm-order"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rayon",
+ "sm-core",
 ]
 
 [[package]]

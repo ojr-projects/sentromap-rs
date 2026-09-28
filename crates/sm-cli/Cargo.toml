@@ -13,6 +13,7 @@ path = "src/main.rs"
 sm-core.workspace = true
 sm-index = { path = "../sm-index" }
 sm-search = { path = "../sm-search" }
+sm-order = { path = "../sm-order" }
 anyhow.workspace = true
 clap.workspace = true
 rayon.workspace = true

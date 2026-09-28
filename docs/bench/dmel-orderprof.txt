@@ -1,0 +1,17 @@
+# sentromap bench order indexes/dmel --n 4,6,8,10,12,15   (tree length per variant: star / chartree per-n / frozen at n=15 / exact MST)
+# 2026-09-28; AMD Ryzen 9 7900X, 24 threads, WSL2; D. mel r6
+unique:      TAACGGCGCTTTTCCAGTGACTCCCCAATCA                                                                                         
+top-repeat:  AGTACGGGACCAGTACGGGACCAGTACGGGA                                                                                         
+query        n                                variants  chartree_ms  chartree_1t_ms  plain_sort_ms  mst_ms  star   chartree  frozen  mst
+unique       4                                1         1.29         0.61            0.06           0.8     0.00   0.00      0.00    0.00
+unique       6                                1         2.57         0.61            0.06           0.1     0.00   0.00      0.00    0.00
+unique       8                                4         2.58         0.61            0.06           0.1     5.75   5.50      5.75    5.75
+unique       10                               165       1.97         0.66            0.07           0.2     9.80   8.33      8.54    9.27
+unique       12                               4322      3.74         1.56            0.21           21.6    11.76  9.16      9.19    9.05
+unique       15                               289719    21.06        56.51           3.06           NaN     14.63  10.06     10.06   -
+top-repeat   4                                2016      1.73         0.50            0.07           4.7     2.78   1.30      1.41    1.09
+top-repeat   6                                2572      1.01         0.53            0.07           7.4     3.36   1.58      1.75    1.18
+top-repeat   8                                3361      3.85         0.58            0.07           12.4    4.36   1.75      2.11    1.23
+top-repeat   10                               5426      1.76         0.80            0.10           32.3    6.35   1.98      2.76    1.30
+top-repeat   12                               9621      2.76         1.33            0.17           100.0   8.64   3.57      4.60    2.65
+top-repeat   15                               177778    9.11         29.78           2.18           NaN     14.37  9.98      9.98    -

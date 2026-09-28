@@ -1,0 +1,13 @@
+[package]
+name = "sm-order"
+description = "Cladogram ordering of search variants: shared-character tree, clade intervals, exact MST"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
