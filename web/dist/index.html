@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sentromap</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="logo">sentromap</span>
+        <span id="genome-name"></span>
+        <span id="genome-stats" class="muted"></span>
+      </div>
+      <form id="query-form" class="query">
+        <input id="query" spellcheck="false" autocomplete="off" placeholder="31-mer, or CONTIG:POS — or double-click the genome" />
+        <label>max n <select id="max-n"></select></label>
+        <label
+          >order
+          <select id="order">
+            <option value="per_n">per-n tree</option>
+            <option value="frozen">frozen (stable)</option>
+            <option value="mst">exact MST</option>
+          </select></label
+        >
+        <button type="submit">Search</button>
+      </form>
+      <div id="status" class="muted"></div>
+    </header>
+    <div class="controls">
+      <form id="region-form" class="region">
+        <select id="contig" title="Jump to a chromosome"></select>
+        <input id="region" spellcheck="false" title="Region, e.g. 2L:1,000,000-1,200,000 or all" />
+      </form>
+      <div class="picker">
+        <button id="tracks-btn" type="button">Tracks ▾</button>
+        <div id="tracks-pop" class="pop"></div>
+      </div>
+      <label
+        >colour
+        <select id="color">
+          <option value="mismatch">by mismatches</option>
+          <option value="strand">by strand</option>
+        </select></label
+      >
+      <label><input id="log" type="checkbox" checked /> log intensity</label>
+    </div>
+    <div id="nbar" class="nbar"></div>
+    <div class="workspace">
+      <div id="gutter" class="gutter"><div class="ruler-spacer"></div></div>
+      <div id="main" class="main"></div>
+      <aside id="side" class="side"></aside>
+    </div>
+    <footer id="footer" class="footer"></footer>
+  </body>
+</html>
