@@ -1,0 +1,13 @@
+[package]
+name = "sm-core"
+description = "k-mer encoding, distances, coordinates, brute-force oracle and synthetic genomes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
