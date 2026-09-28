@@ -72,6 +72,44 @@ enum Cmd {
         #[arg(long, default_value_t = 10_000)]
         spot_checks: usize,
     },
+    /// Import annotations into an index: GFF3 features, a tracks.tsv manifest (bigWig signal,
+    /// RepeatMasker .out, BED), chromosome aliases, and a GC% track from the genome.
+    Annotate {
+        index: PathBuf,
+        /// GFF3 file(s), imported as the feature set "genes" (or NAME=PATH).
+        #[arg(long)]
+        gff: Vec<String>,
+        /// Track manifest: name, kind, format (bigwig|rmsk-out|bed), file, source, description.
+        #[arg(long)]
+        tracks: Option<PathBuf>,
+        /// Chromosome alias table (UCSC chromAlias.txt style).
+        #[arg(long)]
+        alias: Vec<PathBuf>,
+        /// Skip the GC% track.
+        #[arg(long)]
+        no_gc: bool,
+    },
+    /// Serve the HTTP API (and the web front end) for an index.
+    Serve {
+        index: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        addr: std::net::SocketAddr,
+        /// Static front-end directory served at / (default: web/dist if present).
+        #[arg(long)]
+        web: Option<PathBuf>,
+        /// Result cache budget in MB.
+        #[arg(long, default_value_t = 4096)]
+        cache_mb: usize,
+        /// Skip pre-faulting the index into memory.
+        #[arg(long)]
+        no_populate: bool,
+        /// Skip the cost-model calibration at start-up.
+        #[arg(long)]
+        no_calibrate: bool,
+        /// Allow cross-origin requests (for a front end served elsewhere).
+        #[arg(long)]
+        cors: bool,
+    },
     /// Print an index's manifest.
     Info { index: PathBuf },
 }
@@ -252,10 +290,115 @@ fn main() -> Result<()> {
             }
             bench::order_bench(&idx, &queries, &n, &mut std::io::stdout().lock())?;
         }
+        Cmd::Annotate { index, gff, tracks, alias, no_gc } => {
+            annotate(&index, &gff, tracks.as_deref(), &alias, !no_gc)?
+        }
+        Cmd::Serve { index, addr, web, cache_mb, no_populate, no_calibrate, cors } => {
+            let web = web.or_else(|| {
+                let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/dist");
+                d.is_dir().then_some(d)
+            });
+            let cfg = sm_server::Config {
+                index,
+                addr,
+                web,
+                cache_bytes: cache_mb << 20,
+                populate: !no_populate,
+                cors,
+                calibrate: !no_calibrate,
+            };
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(sm_server::serve(cfg))?;
+        }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
         }
     }
+    Ok(())
+}
+
+fn annotate(
+    dir: &std::path::Path,
+    gffs: &[String],
+    tracks: Option<&std::path::Path>,
+    aliases: &[PathBuf],
+    gc: bool,
+) -> Result<()> {
+    use rayon::prelude::*;
+    use sm_annot::{Registry, features, tracks as tr};
+    let idx = Index::open(dir)?;
+    let mut al = sm_annot::Aliases::new(&idx.contigs);
+    for a in aliases {
+        let n = al.load(a)?;
+        eprintln!("aliases: {n} rows from {}", a.display());
+    }
+    let mut reg = Registry::load(dir)?;
+    reg.contig_display = al.display.clone();
+    let report = |what: &str, s: &features::ImportStats| {
+        eprintln!(
+            "{what}: {} features, {} skipped, {} with unknown seqids {:?}",
+            s.features, s.skipped, s.unknown_seqid, s.unknown_seqids
+        );
+    };
+    for g in gffs {
+        let (name, path) = g.split_once('=').map_or(("genes", g.as_str()), |(n, p)| (n, p));
+        let (f, st) = features::parse_gff(std::path::Path::new(path), &idx.contigs, &al)?;
+        report(name, &st);
+        reg.upsert_features(features::write_feature_set(dir, name, "GFF3 features", path, f, st)?);
+    }
+    if let Some(tsv) = tracks {
+        let base = tsv.parent().unwrap_or(std::path::Path::new("."));
+        let text = std::fs::read_to_string(tsv)?;
+        let rows: Vec<Vec<String>> = text
+            .lines()
+            .skip(1)
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.split('\t').map(String::from).collect())
+            .collect();
+        let mut signal = Vec::new();
+        for r in &rows {
+            let [name, kind, format, file, source, desc] = &r[..] else { bail!("bad tracks.tsv row: {r:?}") };
+            let path = base.join(file);
+            match format.as_str() {
+                "bigwig" => signal.push((name, kind, path, source, desc)),
+                "rmsk-out" => {
+                    let (f, st) = features::parse_rmsk(&path, &idx.contigs, &al)?;
+                    report(name, &st);
+                    reg.upsert_features(features::write_feature_set(dir, name, desc, source, f, st)?);
+                }
+                "bed" => {
+                    let (f, st) = features::parse_bed(&path, name, &idx.contigs, &al)?;
+                    report(name, &st);
+                    reg.upsert_features(features::write_feature_set(dir, name, desc, source, f, st)?);
+                }
+                other => eprintln!("skipping {name}: unsupported format {other:?}"),
+            }
+        }
+        let t = Instant::now();
+        let infos: Vec<sm_annot::TrackInfo> = signal
+            .par_iter()
+            .map(|(name, kind, path, source, desc)| {
+                let meta = tr::TrackMeta { name, kind, description: desc, source };
+                tr::import_bigwig(dir, path, &meta, &idx.contigs, &al)
+            })
+            .collect::<Result<_>>()?;
+        for i in infos {
+            eprintln!(
+                "track {}: coverage {:.1}%, p01 {:.3}, p99 {:.3}, unknown chroms {}",
+                i.name,
+                i.coverage * 100.0,
+                i.p01,
+                i.p99,
+                i.unknown_chroms.len()
+            );
+            reg.upsert_track(i);
+        }
+        eprintln!("signal tracks imported in {:.1} s", t.elapsed().as_secs_f64());
+    }
+    if gc {
+        reg.upsert_track(tr::import_gc(dir, &idx.seq, &idx.contigs)?);
+    }
+    reg.save(dir)?;
+    eprintln!("registry: {} feature sets, {} tracks", reg.feature_sets.len(), reg.tracks.len());
     Ok(())
 }

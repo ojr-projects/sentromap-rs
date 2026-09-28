@@ -1,0 +1,29 @@
+[package]
+name = "sm-server"
+description = "HTTP API: query jobs polled by the web front end, result cache, rasters, tracks and annotations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+sm-index = { path = "../sm-index" }
+sm-search = { path = "../sm-search" }
+sm-order = { path = "../sm-order" }
+sm-agg = { path = "../sm-agg" }
+sm-annot = { path = "../sm-annot" }
+anyhow.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+tokio-stream = "0.1"
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "compression-zstd", "compression-br", "fs", "trace"] }
+bytes = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

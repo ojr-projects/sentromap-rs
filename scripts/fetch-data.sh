@@ -38,7 +38,7 @@ genomes() {
     fetch_gunzip "$dm.gff.gz" "$DATA/d_mel.gff"
 }
 
-# D. melanogaster dm6 annotation tracks. UCSC and ChIP-Atlas use UCSC chromosome names
+# D. melanogaster dm6 annotation tracks (GC% is computed from the genome by `sentromap annotate`). UCSC and ChIP-Atlas use UCSC chromosome names
 # (chr2L ...); dm6.chromAlias.txt maps them to the RefSeq accessions in d_mel.fna.
 UCSC=https://hgdownload.soe.ucsc.edu/goldenPath/dm6
 CHIPATLAS=https://chip-atlas.dbcls.jp/data/dm6/eachData/bw
@@ -71,7 +71,6 @@ dm6_tracks() {
     fetch "$UCSC/bigZips/dm6.chrom.sizes" "$dir/dm6.chrom.sizes"
     fetch "$UCSC/bigZips/dm6.fa.out.gz" "$dir/rmsk.fa.out.gz"          # RepeatMasker
     fetch "$UCSC/bigZips/dm6.trf.bed.gz" "$dir/trf.bed.gz"              # tandem repeats
-    fetch "$UCSC/bigZips/dm6.gc5Base.wigVarStep.gz" "$dir/gc5Base.wig.gz"  # GC% in 5 bp windows
     fetch "$UCSC/phyloP124way/dm6.phyloP124way.bw" "$dir/phyloP124way.bw"
     fetch "$UCSC/phastCons124way/dm6.phastCons124way.bw" "$dir/phastCons124way.bw"
 
@@ -79,7 +78,6 @@ dm6_tracks() {
     printf 'name\tkind\tformat\tfile\tsource\tdescription\n' > "$manifest.part"
     printf 'phyloP124way\tconservation\tbigwig\tphyloP124way.bw\tUCSC dm6\tper-base conservation, 124 insects\n' >> "$manifest.part"
     printf 'phastCons124way\tconservation\tbigwig\tphastCons124way.bw\tUCSC dm6\tconserved-element probability, 124 insects\n' >> "$manifest.part"
-    printf 'GC\tsequence\twig\tgc5Base.wig.gz\tUCSC dm6\tGC percent, 5 bp windows\n' >> "$manifest.part"
     printf 'RepeatMasker\trepeats\trmsk-out\trmsk.fa.out.gz\tUCSC dm6\tinterspersed and simple repeats\n' >> "$manifest.part"
     printf 'TRF\trepeats\tbed\ttrf.bed.gz\tUCSC dm6\tTandem Repeats Finder\n' >> "$manifest.part"
     local line name kind id desc

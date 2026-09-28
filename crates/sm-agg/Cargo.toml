@@ -1,0 +1,17 @@
+[package]
+name = "sm-agg"
+description = "Result sets, orderings per n, genome-position site tables, rasters and histograms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+sm-index = { path = "../sm-index" }
+sm-search = { path = "../sm-search" }
+sm-order = { path = "../sm-order" }
+rayon.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
