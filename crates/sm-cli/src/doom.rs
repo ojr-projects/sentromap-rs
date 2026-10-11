@@ -123,7 +123,9 @@ fn queries(idx: &Index, ann: &Annotations, per_class: usize, seed: u64, variant:
                 if v.is_nan() {
                     continue;
                 }
-                if (b - 16..=b + 16).all(|o| o == b || !(track.value_at(o * 32) > v)) {
+                if (b - 16..=b + 16)
+                    .all(|o| o == b || track.value_at(o * 32).partial_cmp(&v) != Some(std::cmp::Ordering::Greater))
+                {
                     peaks.push((v, b * 32 + 16));
                 }
             }

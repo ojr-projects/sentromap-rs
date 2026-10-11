@@ -115,3 +115,37 @@ Forking-paths warning: this is the second attempt. If KT0b fails, there is no KT
   or phastCons, at > 3× the twins' rate (floored at α) with ≥ 5 significant queries. Input is a diagnostic only:
   a survivor whose Input rate is as high as its target-track rate is flagged as a mappability or composition
   artefact.
+
+### KT0b result (2026-10-11): CONTINUE, narrowly, on one mechanism
+
+`sentromap doom kt0 indexes/dmel --b` (450 queries, 3.7 s; `docs/doom/kt0b.tsv`). Pre-registration committed
+first, in 026c832.
+
+**Verdict as registered: CONTINUE.** Unflagged survivors: ctcf_summit/CTCF at n = 8 (5/43, against 0/26 for
+the twins), and ctcf_summit/phastCons at n = 4 and n = 8. Each survivor class needed a closer look:
+
+- **Low-n survivors are floor-inflated.** Shuffled twins are absent k-mers with no neighbours at n ≤ 4, so the
+  baseline is the α floor. At n = 0–4 the summit queries' "neighbours" are exact repeat copies, and Input is
+  high there too. Not credible.
+- **phastCons survivors are power-mismatched.** At n = 8 the twins have about a third of the effective sites
+  (5 vs 15). The twins match composition but not neighbourhood size. **Design fix for every later check:
+  controls must match neighbourhood size as well as composition.**
+- **CTCF is the real survivor.** Per query, the class-level Input flag was misleading:
+  - n = 10: 6 of 6 significant summit queries show a positive CTCF peak at the crease (z = 3.5 to 7.0).
+    Input is flat in 4 of them and only modest in 2 (z = 1.8 and 3.2, against CTCF z = 3.9 and 7.0).
+    Composition-matched twins: 0/50, with a comparable number of sites (median 171 vs 292 effective).
+    Composition and power both fail to explain it.
+  - n = 8: 3 clean peaks (z = 7.3, 15.0, 6.1, with Input z near 0); 1 repeat/mappability artefact (CTCF z = 31.7
+    with Input z = 29.7); 1 dip.
+  - The effect is a minority one: about 12% of strong CTCF summits. One survivor contains a CTCF-like motif
+    (`CTGGCCGCTGGGGGGCGC`).
+- **Unchanged from KT0:** phastCons and Input "structure" follows GC. ctcf_motif/phastCons at n = 10 is 88%
+  against 78% for its twins: composition, not motif.
+
+**What this means for the plan:**
+1. Adjusted mode has to control composition *and* neighbourhood size. The circular shift alone is
+   insufficient (check 1.3, confirmed).
+2. Input-concordance has to be scored per query, not per class.
+3. **The top threat is now check 1.4.** The surviving signal is the kind a short exact motif could carry. If
+   the exact 8–12-mer sites shared by these queries reproduce the CTCF peaks equally well, the Hamming
+   neighbourhood adds nothing. Run 1.4 (pre-registered, cheap) before investing in the GPU sweep.
