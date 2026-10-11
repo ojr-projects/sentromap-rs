@@ -9,6 +9,7 @@ use sm_index::{BuildOptions, Index};
 use sm_search::{CostModel, Engine};
 
 mod bench;
+mod doom;
 
 #[derive(Parser)]
 #[command(name = "sentromap", version, about = "Genome-wide Hamming-neighbourhood search for 31-mers")]
@@ -110,8 +111,30 @@ enum Cmd {
         #[arg(long)]
         cors: bool,
     },
+    /// Doom checks: cheap tests designed to kill the companion-track idea (docs/doom.md).
+    Doom {
+        #[command(subcommand)]
+        what: DoomCmd,
+    },
     /// Print an index's manifest.
     Info { index: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum DoomCmd {
+    /// Kill test zero: crease-aligned profiles of n-neighbourhoods vs a circular-shift null.
+    Kt0 {
+        index: PathBuf,
+        /// Queries per class (unique, TE, CTCF motif, absent).
+        #[arg(long, default_value_t = 50)]
+        per_class: usize,
+        /// Per-query results (default docs/doom/kt0.tsv or kt0b.tsv).
+        #[arg(long)]
+        tsv: Option<PathBuf>,
+        /// Run the revised, pre-registered KT0b design.
+        #[arg(long)]
+        b: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -308,6 +331,15 @@ fn main() -> Result<()> {
                 calibrate: !no_calibrate,
             };
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(sm_server::serve(cfg))?;
+        }
+        Cmd::Doom { what: DoomCmd::Kt0 { index, per_class, tsv, b } } => {
+            let tsv = tsv.unwrap_or_else(|| PathBuf::from(if b { "docs/doom/kt0b.tsv" } else { "docs/doom/kt0.tsv" }));
+            let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
+            let ann = sm_annot::Annotations::open(&index)?;
+            if let Some(d) = tsv.parent() {
+                std::fs::create_dir_all(d)?;
+            }
+            doom::kill_test_zero(&idx, &ann, per_class, b as u8, &tsv, &mut std::io::stdout().lock())?;
         }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;
