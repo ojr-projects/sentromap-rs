@@ -140,6 +140,9 @@ enum DoomCmd {
         index: PathBuf,
         #[arg(long, default_value = "docs/doom/c14.tsv")]
         tsv: PathBuf,
+        /// Also run the pre-registered C1.4b best-motif residual analysis.
+        #[arg(long)]
+        b: bool,
     },
 }
 
@@ -347,10 +350,10 @@ fn main() -> Result<()> {
             }
             doom::kill_test_zero(&idx, &ann, per_class, b as u8, &tsv, &mut std::io::stdout().lock())?;
         }
-        Cmd::Doom { what: DoomCmd::C14 { index, tsv } } => {
+        Cmd::Doom { what: DoomCmd::C14 { index, tsv, b } } => {
             let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
             let ann = sm_annot::Annotations::open(&index)?;
-            doom::check_1_4(&idx, &ann, &tsv, &mut std::io::stdout().lock())?;
+            doom::check_1_4(&idx, &ann, b, &tsv, &mut std::io::stdout().lock())?;
         }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;

@@ -461,7 +461,13 @@ fn window(q: u64, k: u32, w: u32) -> u32 {
 }
 
 /// Dedupe (one site per window), subsample, and test the shape statistic against shifts.
-fn score_sites(idx: &Index, track: &Track, own: Option<u32>, mut centres: Vec<(i64, bool)>, seed: u64) -> (usize, f64, f64) {
+fn score_sites(
+    idx: &Index,
+    track: &Track,
+    own: Option<u32>,
+    mut centres: Vec<(i64, bool)>,
+    seed: u64,
+) -> (usize, f64, f64, f64) {
     centres.retain(|&(c, _)| own.is_none_or(|p| (c - p as i64 - K as i64 / 2).abs() > HALF + K as i64));
     centres.sort_unstable();
     let mut eff: Vec<(i64, bool)> = Vec::new();
@@ -487,18 +493,28 @@ fn score_sites(idx: &Index, track: &Track, own: Option<u32>, mut centres: Vec<(i
         })
         .collect();
     if sites.len() < 3 {
-        return (effective, f64::NAN, f64::NAN);
+        return (effective, f64::NAN, f64::NAN, f64::NAN);
     }
     let deltas: Vec<i64> = (0..SHIFTS).map(|_| 10_000 + (rng.next_u64() % 10_000_000) as i64).collect();
     let (obs, _) = stats(track, &sites, 0);
     let null: Vec<f64> = deltas.iter().map(|&d| stats(track, &sites, d).0).collect();
     let (z, p) = test(obs, &null);
-    (effective, z, p)
+    (effective, z, p, obs)
 }
 
 const KS: [u32; 3] = [8, 10, 12];
 
-pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mut impl Write) -> Result<()> {
+/// Window value → [(query, offset w, found as reverse complement)].
+type PatternTable = std::collections::HashMap<u32, Vec<(u32, u32, bool)>>;
+
+/// `residual`: also run C1.4b (best-motif residual, per-query Input exclusion, per-site effects).
+pub fn check_1_4(
+    idx: &Index,
+    ann: &Annotations,
+    residual: bool,
+    tsv: &std::path::Path,
+    out: &mut impl Write,
+) -> Result<()> {
     let track = ann.track("CTCF").context("CTCF track missing")?;
     let qs: Vec<Query> = queries(idx, ann, 50, 0x5EED_000B, 1)?
         .into_iter()
@@ -507,10 +523,10 @@ pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mu
     let t = std::time::Instant::now();
 
     // Pattern table per k: window value → [(query, offset w, found as reverse complement)].
-    let tables: Vec<std::collections::HashMap<u32, Vec<(u32, u32, bool)>>> = KS
+    let tables: Vec<PatternTable> = KS
         .iter()
         .map(|&k| {
-            let mut m: std::collections::HashMap<u32, Vec<(u32, u32, bool)>> = Default::default();
+            let mut m: PatternTable = Default::default();
             for (qi, q) in qs.iter().enumerate() {
                 for w in 0..=K - k {
                     let p = window(q.kmer, k, w);
@@ -573,6 +589,7 @@ pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mu
         eff: usize,
         z: f64,
         p: f64,
+        obs: f64,
     }
     let rows: Vec<R> = qs
         .par_iter()
@@ -581,8 +598,8 @@ pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mu
             let seed = 0xC14 ^ q.kmer;
             let mut rows = Vec::new();
             let mut push = |set: String, centres: Vec<(i64, bool)>| {
-                let (eff, z, p) = score_sites(idx, track, q.own, centres, seed);
-                rows.push(R { class: q.class, kmer: q.kmer, set, eff, z, p });
+                let (eff, z, p, obs) = score_sites(idx, track, q.own, centres, seed);
+                rows.push(R { class: q.class, kmer: q.kmer, set, eff, z, p, obs });
             };
             let (v, _) = sm_search::search(idx, q.kmer, 10, &CostModel::default(), None);
             let hits = v.sites(idx);
@@ -664,7 +681,92 @@ pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mu
     } else {
         "CONTINUE: the Hamming neighbourhood beats the central exact-motif baseline"
     };
-    writeln!(out, "\nqualifying ctcf_summit queries: {qual}; central baseline z >= ours in {beaten} ({:.0}%)", frac * 100.0)?;
+    writeln!(
+        out,
+        "\nqualifying ctcf_summit queries: {qual}; central baseline z >= ours in {beaten} ({:.0}%)",
+        frac * 100.0
+    )?;
     writeln!(out, "VERDICT: {verdict}")?;
+    if !residual {
+        return Ok(());
+    }
+
+    // C1.4b.
+    let input = ann.track("Input").context("Input track missing")?;
+    writeln!(out, "\nC1.4b: best-motif residual")?;
+    writeln!(out, "kmer\tn\tH_z\tInput_p\tbest_motif\tbest_z\tresid_eff/H_eff\tresid_z\tH_effect\tbest_effect")?;
+    let (mut qual, mut explained) = (0, 0);
+    for q in &qs {
+        if q.class != "ctcf_summit" {
+            continue;
+        }
+        let get = |set: &str| rows.iter().find(|r| r.kmer == q.kmer && r.class == q.class && r.set == set);
+        let (h8, h10) = (get("H8"), get("H10"));
+        let sig = |r: Option<&R>| r.is_some_and(|r| r.p <= ALPHA);
+        if !sig(h8) && !sig(h10) {
+            continue;
+        }
+        let zf = |r: Option<&R>| r.map_or(f64::NEG_INFINITY, |r| if r.z.is_finite() { r.z } else { f64::NEG_INFINITY });
+        let (n, h) = if zf(h8) >= zf(h10) { (8u8, h8.unwrap()) } else { (10u8, h10.unwrap()) };
+        let (v, _) = sm_search::search(idx, q.kmer, n as u32, &CostModel::default(), None);
+        let hits = v.sites(idx);
+        let centre = |h: &Hit| (h.pos as i64 + K as i64 / 2, h.strand == Strand::Reverse);
+        let seed = 0xC14 ^ q.kmer;
+        let (_, _, input_p, _) = score_sites(idx, input, q.own, hits.iter().map(centre).collect(), seed);
+        // Best motif window by CTCF z over all E sets of this query.
+        let best = rows
+            .iter()
+            .filter(|r| r.kmer == q.kmer && r.class == q.class && r.set.starts_with('E') && r.z.is_finite())
+            .max_by(|a, b| a.z.total_cmp(&b.z));
+        let Some(best) = best else { continue };
+        let (k, w) = {
+            let name = &best.set[1..];
+            let (k, rest) = name.split_at(name.find(|c: char| !c.is_ascii_digit()).unwrap());
+            let k: u32 = k.parse().unwrap();
+            let w = if rest == "c" { (K - k) / 2 } else { rest[1..].parse().unwrap() };
+            (k, w)
+        };
+        let pat = window(q.kmer, k, w);
+        let pat_rc = rc_k(pat, k);
+        let contains = |var: u64| (0..=K - k).any(|o| matches!(window(var, k, o), x if x == pat || x == pat_rc));
+        let resid: Vec<(i64, bool)> = hits.iter().filter(|h| !contains(h.variant)).map(centre).collect();
+        let (reff, rz, _, _) = score_sites(idx, track, q.own, resid, seed);
+        let motif = kmer::to_string(q.kmer)[w as usize..(w + k) as usize].to_string();
+        if input_p <= ALPHA {
+            writeln!(
+                out,
+                "{}\t{n}\t{:.2}\t{input_p:.3}\t{motif}\t{:.1}\t-\t-\t-\t-  (excluded: Input)",
+                kmer::to_string(q.kmer),
+                h.z,
+                best.z
+            )?;
+            continue;
+        }
+        qual += 1;
+        let gone = !(rz.is_finite() && rz >= 2.0);
+        explained += gone as usize;
+        writeln!(
+            out,
+            "{}\t{n}\t{:.2}\t{input_p:.3}\t{motif}\t{:.1}\t{reff}/{}\t{rz:.2}\t{:.3}\t{:.3}",
+            kmer::to_string(q.kmer),
+            h.z,
+            best.z,
+            h.eff,
+            h.obs,
+            best.obs
+        )?;
+    }
+    let frac = if qual > 0 { explained as f64 / qual as f64 } else { f64::NAN };
+    let verdict = if qual < 5 {
+        "INCONCLUSIVE (fewer than 5 qualifying queries)"
+    } else if frac > 0.8 {
+        "KILL: the structure is entirely the best short motif"
+    } else if frac > 0.5 {
+        "PIVOT: motif plus context"
+    } else {
+        "CONTINUE: structure survives removal of the best short motif"
+    };
+    writeln!(out, "\nqualifying: {qual}; best-motif residual z < 2 in {explained} ({:.0}%)", frac * 100.0)?;
+    writeln!(out, "C1.4b VERDICT: {verdict}")?;
     Ok(())
 }

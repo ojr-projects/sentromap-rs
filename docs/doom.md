@@ -206,3 +206,20 @@ The same 150 queries and CTCF track. For each ctcf_summit query where ours is si
 **Kill if:** in more than 80% of qualifying queries the best-motif residual has z < 2 (the structure is
 entirely the best short motif). **Pivot (to "motif plus context") if:** 50–80%. **Continue if:** ≤ 50%.
 **Inconclusive if:** fewer than 5 qualify.
+
+### C1.4b result (2026-10-11): CONTINUE, on a thin evidence base
+
+`sentromap doom c14 indexes/dmel --b`. The per-query Input rule excluded 2 of 8 queries, including the
+repeat artefact first seen in KT0b. Of the 6 left, the best-motif residual has z < 2 in 2 (33%): a dip (−3.46)
+and a 3-site query (no power). In the other 4, the structure survives removal of the best short motif even
+though the CTCF track was used to choose that motif: 5.89 → 5.86 (134/139 sites kept), 4.89 → 4.80 (263/266),
+5.65 → 5.65 (8/8), 7.00 → 3.63 (192/197).
+
+- **H sites almost never contain the query's best short motif**, yet they still carry the CTCF peak. Candidate
+  explanations: degenerate motif variants (the point of mismatch tolerance), wider context, or composition,
+  which this check does not control and KT0b did. Untested; the next mechanism question.
+- **Per site, exact-motif sites are usually stronger** (e.g. effect 0.77 vs 8.56). Ours wins per site in 1 of
+  5. The neighbourhood finds *different* sites, not stronger ones.
+- **Fragility.** All of this rests on about 4 of 50 strong CTCF summits (8%), on one track, in one genome.
+  That is enough to continue, and nowhere near enough to claim anything. The most dangerous checks still open:
+  1.2 (calibration QQ), 1.7 (power), 3.1 (sweep FDR on shifted tracks), 3.2 (replicate agreement).
