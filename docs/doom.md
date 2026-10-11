@@ -149,3 +149,26 @@ the twins), and ctcf_summit/phastCons at n = 4 and n = 8. Each survivor class ne
 3. **The top threat is now check 1.4.** The surviving signal is the kind a short exact motif could carry. If
    the exact 8–12-mer sites shared by these queries reproduce the CTCF peaks equally well, the Hamming
    neighbourhood adds nothing. Run 1.4 (pre-registered, cheap) before investing in the GPU sweep.
+
+### C1.4 Does the Hamming neighbourhood beat plain exact short motifs? (pre-registered 2026-10-11, before running)
+
+The same queries as KT0b (same seed) for the ctcf_summit, ctcf_motif and unique classes, on the **CTCF** track.
+Window, statistics, deduplication, the own-site exclusion and 100 circular shifts are all as in KT0b. For each
+query, CTCF shape z is computed for these site sets:
+
+| Set | Sites |
+|---|---|
+| **H8, H10** (ours) | Hamming-neighbourhood sites at n = 8 and n = 10 |
+| **E8c, E10c, E12c** (baseline) | exact genome-wide occurrences, either strand, of the query's *central* k-bp window (k = 8, 10, 12), each aligned so the window sits where it does in the query |
+| **Ebest** (stronger baseline, report only) | the best z over *every* k-bp window of the query, for each k. Its upward bias from picking the maximum is not corrected |
+| **H10-residual** (report only) | H10 sites whose variant does *not* contain the query's exact central 12-mer: is there structure beyond that motif? |
+
+**Kill if:** among ctcf_summit queries where ours is significant (max of H8 and H10 has p ≤ α), the central
+baseline (max of E8c, E10c, E12c) reaches a z at least as high in **more than 80%** of them. Each side gets
+its best of its own options: 2 for ours, 3 for the baseline.
+**Pivot (narrow the claim to "mostly motif") if:** 50–80%.
+**Continue if:** ≤ 50%.
+**Inconclusive if:** fewer than 5 queries qualify. No re-run of the same design.
+
+HOMER is not installed, and the exact-k-mer baselines stand in for it. A HOMER comparison stays on the list for
+Phase 5.
