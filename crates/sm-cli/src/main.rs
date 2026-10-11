@@ -135,6 +135,12 @@ enum DoomCmd {
         #[arg(long)]
         b: bool,
     },
+    /// Check 1.4: Hamming neighbourhood vs exact short-motif sites, on CTCF.
+    C14 {
+        index: PathBuf,
+        #[arg(long, default_value = "docs/doom/c14.tsv")]
+        tsv: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -340,6 +346,11 @@ fn main() -> Result<()> {
                 std::fs::create_dir_all(d)?;
             }
             doom::kill_test_zero(&idx, &ann, per_class, b as u8, &tsv, &mut std::io::stdout().lock())?;
+        }
+        Cmd::Doom { what: DoomCmd::C14 { index, tsv } } => {
+            let idx = Index::open_with(&index, sm_index::array::MapOptions { populate: true })?;
+            let ann = sm_annot::Annotations::open(&index)?;
+            doom::check_1_4(&idx, &ann, &tsv, &mut std::io::stdout().lock())?;
         }
         Cmd::Info { index } => {
             let m = sm_index::manifest::read_manifest(&index)?;

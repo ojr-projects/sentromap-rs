@@ -172,3 +172,37 @@ its best of its own options: 2 for ours, 3 for the baseline.
 
 HOMER is not installed, and the exact-k-mer baselines stand in for it. A HOMER comparison stays on the list for
 Phase 5.
+
+### C1.4 result (2026-10-11): CONTINUE as registered, with a serious caveat
+
+`sentromap doom c14 indexes/dmel` (150 queries, 12.8 s; `docs/doom/c14.tsv`).
+
+- **Verdict as registered: CONTINUE.** The central baseline matched or beat ours in 3 of 8 qualifying summit
+  queries (38%). The count is conservative: one qualifier is a dip (z = −3.9), and one is the
+  repeat-mappability artefact flagged in KT0b (z = 22.7). Among the 6 genuine positive peaks the baseline wins
+  2, both by hairlines (2.54 vs 2.53, 5.77 vs 5.65).
+- **The structure is not carried by the central 12-mer.** H10-residual, with all sites containing the query's
+  exact central 12-mer removed, keeps essentially the full z in the clean queries (5.89 → 5.89, 7.00 → 7.00,
+  4.89 → 4.89, 4.22 → 3.76). Only the artefact collapses (22.7 → 0.7).
+- **Caveat: Ebest dominates in raw z** (45–150 against our 4–7). The best exact 8-mer window, scanned
+  genome-wide, gives thousands of sites, and z grows with site count. **As a motif detector the Hamming
+  neighbourhood loses badly, and a simpler competitor exists: a companion track built from exact short
+  k-mers (NoPeak-style).** The registered comparison used the central window, so this does not change the
+  verdict, but it makes "structure beyond the best motif" the claim that has to survive.
+
+### C1.4b Does the structure survive removal of the best short motif? (pre-registered 2026-10-11, before running)
+
+The same 150 queries and CTCF track. For each ctcf_summit query where ours is significant (as in C1.4):
+
+- **Exclude** queries whose Input shape p ≤ α at the same n (per-query concordance, the lesson of KT0b).
+- **Best motif:** the query's exact k-bp window (k ∈ {8, 10, 12}, any offset) whose genome-wide occurrences give
+  the highest CTCF z. This is the strongest motif proxy available, chosen with access to the CTCF track, so it
+  is deliberately harsh on us.
+- **Best-motif residual:** the H sites (at whichever n gave our max z) whose variant 31-mer does not contain
+  that k-mer at any offset, in either orientation. Score its CTCF shape z.
+- Also report the per-site effect size (mean shape per effective site) for H and for the best motif. Raw z is
+  not comparable across very different site counts.
+
+**Kill if:** in more than 80% of qualifying queries the best-motif residual has z < 2 (the structure is
+entirely the best short motif). **Pivot (to "motif plus context") if:** 50–80%. **Continue if:** ≤ 50%.
+**Inconclusive if:** fewer than 5 qualify.

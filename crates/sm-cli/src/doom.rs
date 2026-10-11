@@ -446,3 +446,225 @@ pub fn kill_test_zero(
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// Check 1.4: Hamming neighbourhood vs exact short-motif sites (docs/doom.md, pre-registered).
+
+/// Reverse complement of a k-mer of `k` bases held in the low 2k bits.
+fn rc_k(x: u32, k: u32) -> u32 {
+    (0..k).fold(0u32, |a, i| (a << 2) | (3 - ((x >> (2 * i)) & 3)))
+}
+
+/// The `k`-base window at offset `w` of a 31-mer.
+fn window(q: u64, k: u32, w: u32) -> u32 {
+    ((q >> (2 * (K - k - w))) & ((1u64 << (2 * k)) - 1)) as u32
+}
+
+/// Dedupe (one site per window), subsample, and test the shape statistic against shifts.
+fn score_sites(idx: &Index, track: &Track, own: Option<u32>, mut centres: Vec<(i64, bool)>, seed: u64) -> (usize, f64, f64) {
+    centres.retain(|&(c, _)| own.is_none_or(|p| (c - p as i64 - K as i64 / 2).abs() > HALF + K as i64));
+    centres.sort_unstable();
+    let mut eff: Vec<(i64, bool)> = Vec::new();
+    for c in centres {
+        if eff.last().is_none_or(|l| c.0 - l.0 > 2 * HALF) {
+            eff.push(c);
+        }
+    }
+    let effective = eff.len();
+    let mut rng = Rng::new(seed);
+    if eff.len() > MAX_SITES {
+        for i in 0..MAX_SITES {
+            let j = rng.range(i, eff.len());
+            eff.swap(i, j);
+        }
+        eff.truncate(MAX_SITES);
+    }
+    let sites: Vec<Site> = eff
+        .iter()
+        .filter_map(|&(centre, reverse)| {
+            let c = idx.contigs.get(idx.contigs.locate(u32::try_from(centre).ok()?)?);
+            Some(Site { centre, reverse, c_off: c.offset as i64, c_len: c.len as i64 })
+        })
+        .collect();
+    if sites.len() < 3 {
+        return (effective, f64::NAN, f64::NAN);
+    }
+    let deltas: Vec<i64> = (0..SHIFTS).map(|_| 10_000 + (rng.next_u64() % 10_000_000) as i64).collect();
+    let (obs, _) = stats(track, &sites, 0);
+    let null: Vec<f64> = deltas.iter().map(|&d| stats(track, &sites, d).0).collect();
+    let (z, p) = test(obs, &null);
+    (effective, z, p)
+}
+
+const KS: [u32; 3] = [8, 10, 12];
+
+pub fn check_1_4(idx: &Index, ann: &Annotations, tsv: &std::path::Path, out: &mut impl Write) -> Result<()> {
+    let track = ann.track("CTCF").context("CTCF track missing")?;
+    let qs: Vec<Query> = queries(idx, ann, 50, 0x5EED_000B, 1)?
+        .into_iter()
+        .filter(|q| matches!(q.class, "ctcf_summit" | "ctcf_motif" | "unique"))
+        .collect();
+    let t = std::time::Instant::now();
+
+    // Pattern table per k: window value → [(query, offset w, found as reverse complement)].
+    let tables: Vec<std::collections::HashMap<u32, Vec<(u32, u32, bool)>>> = KS
+        .iter()
+        .map(|&k| {
+            let mut m: std::collections::HashMap<u32, Vec<(u32, u32, bool)>> = Default::default();
+            for (qi, q) in qs.iter().enumerate() {
+                for w in 0..=K - k {
+                    let p = window(q.kmer, k, w);
+                    m.entry(p).or_default().push((qi as u32, w, false));
+                    m.entry(rc_k(p, k)).or_default().push((qi as u32, w, true));
+                }
+            }
+            m
+        })
+        .collect();
+
+    // One pass over the genome, contigs in parallel: occurrence → (k index, query, w) → site centre.
+    type Occ = (u8, u32, u32, i64, bool);
+    let occs: Vec<Occ> = idx
+        .contigs
+        .iter()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .flat_map_iter(|c| {
+            let seq = idx.seq.fetch(c.offset, c.end());
+            let mut found: Vec<Occ> = Vec::new();
+            let mut val = 0u32;
+            let mut run = 0u32;
+            for (i, &b) in seq.iter().enumerate() {
+                let code = kmer::BASE_CODE[b as usize];
+                if code == kmer::INVALID {
+                    run = 0;
+                    continue;
+                }
+                val = (val << 2) | code as u32;
+                run += 1;
+                for (ki, &k) in KS.iter().enumerate() {
+                    if run < k {
+                        continue;
+                    }
+                    let p = val & ((1u32 << (2 * k)) - 1);
+                    if let Some(list) = tables[ki].get(&p) {
+                        let start = (c.offset as usize + i + 1 - k as usize) as i64;
+                        for &(qi, w, rc) in list {
+                            // Place the query's 31-mer around the occurrence, then take its centre.
+                            let qstart = if rc { start - (K - k - w) as i64 } else { start - w as i64 };
+                            found.push((ki as u8, qi, w, qstart + K as i64 / 2, rc));
+                        }
+                    }
+                }
+            }
+            found
+        })
+        .collect();
+    let mut by: std::collections::HashMap<(u8, u32, u32), Vec<(i64, bool)>> = Default::default();
+    for (ki, qi, w, centre, rc) in occs {
+        by.entry((ki, qi, w)).or_default().push((centre, rc));
+    }
+    eprintln!("c14: {} queries, exact-occurrence scan in {:.1} s", qs.len(), t.elapsed().as_secs_f64());
+
+    struct R {
+        class: &'static str,
+        kmer: u64,
+        set: String,
+        eff: usize,
+        z: f64,
+        p: f64,
+    }
+    let rows: Vec<R> = qs
+        .par_iter()
+        .enumerate()
+        .flat_map_iter(|(qi, q)| {
+            let seed = 0xC14 ^ q.kmer;
+            let mut rows = Vec::new();
+            let mut push = |set: String, centres: Vec<(i64, bool)>| {
+                let (eff, z, p) = score_sites(idx, track, q.own, centres, seed);
+                rows.push(R { class: q.class, kmer: q.kmer, set, eff, z, p });
+            };
+            let (v, _) = sm_search::search(idx, q.kmer, 10, &CostModel::default(), None);
+            let hits = v.sites(idx);
+            let centre = |h: &Hit| (h.pos as i64 + K as i64 / 2, h.strand == Strand::Reverse);
+            for n in [8u8, 10] {
+                push(format!("H{n}"), hits.iter().filter(|h| h.mismatches <= n).map(centre).collect());
+            }
+            let core = window(q.kmer, 12, (K - 12) / 2);
+            push(
+                "H10_residual".into(),
+                hits.iter().filter(|h| window(h.variant, 12, (K - 12) / 2) != core).map(centre).collect(),
+            );
+            for (ki, &k) in KS.iter().enumerate() {
+                let wc = (K - k) / 2;
+                for w in 0..=K - k {
+                    let centres = by.get(&(ki as u8, qi as u32, w)).cloned().unwrap_or_default();
+                    let name = if w == wc { format!("E{k}c") } else { format!("E{k}w{w}") };
+                    push(name, centres);
+                }
+            }
+            rows.into_iter()
+        })
+        .collect();
+
+    let mut f = std::io::BufWriter::new(std::fs::File::create(tsv)?);
+    writeln!(f, "class\tkmer\tset\teffective\tshape_z\tshape_p")?;
+    for r in &rows {
+        writeln!(f, "{}\t{}\t{}\t{}\t{:.3}\t{:.4}", r.class, kmer::to_string(r.kmer), r.set, r.eff, r.z, r.p)?;
+    }
+
+    const ALPHA: f64 = 0.0101;
+    let nan_max = |xs: &[f64]| xs.iter().copied().filter(|x| x.is_finite()).fold(f64::NAN, f64::max);
+    writeln!(out, "class\tkmer\tH8_z\tH10_z\tH10res_z\tE8c_z\tE10c_z\tE12c_z\tEbest_z\tours_sig\tbaseline_ge")?;
+    let (mut qual, mut beaten) = (0, 0);
+    for q in &qs {
+        let get = |set: &str| rows.iter().find(|r| r.kmer == q.kmer && r.class == q.class && r.set == set);
+        let z = |set: &str| get(set).map_or(f64::NAN, |r| r.z);
+        let p = |set: &str| get(set).map_or(f64::NAN, |r| r.p);
+        let ours_sig = p("H8") <= ALPHA || p("H10") <= ALPHA;
+        let ours = nan_max(&[z("H8"), z("H10")]);
+        let base_c = nan_max(&[z("E8c"), z("E10c"), z("E12c")]);
+        let ebest = nan_max(
+            &rows
+                .iter()
+                .filter(|r| r.kmer == q.kmer && r.class == q.class && r.set.starts_with('E'))
+                .map(|r| r.z)
+                .collect::<Vec<_>>(),
+        );
+        let ge = base_c.is_finite() && base_c >= ours;
+        if q.class == "ctcf_summit" && ours_sig {
+            qual += 1;
+            beaten += ge as usize;
+        }
+        if ours_sig || q.class == "ctcf_summit" {
+            writeln!(
+                out,
+                "{}\t{}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{}\t{}",
+                q.class,
+                kmer::to_string(q.kmer),
+                z("H8"),
+                z("H10"),
+                z("H10_residual"),
+                z("E8c"),
+                z("E10c"),
+                z("E12c"),
+                ebest,
+                ours_sig,
+                ge
+            )?;
+        }
+    }
+    let frac = if qual > 0 { beaten as f64 / qual as f64 } else { f64::NAN };
+    let verdict = if qual < 5 {
+        "INCONCLUSIVE (fewer than 5 qualifying queries)"
+    } else if frac > 0.8 {
+        "KILL: exact short-motif sites match or beat the Hamming neighbourhood"
+    } else if frac > 0.5 {
+        "PIVOT: mostly motif; narrow the claim"
+    } else {
+        "CONTINUE: the Hamming neighbourhood beats the central exact-motif baseline"
+    };
+    writeln!(out, "\nqualifying ctcf_summit queries: {qual}; central baseline z >= ours in {beaten} ({:.0}%)", frac * 100.0)?;
+    writeln!(out, "VERDICT: {verdict}")?;
+    Ok(())
+}
